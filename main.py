@@ -1,9 +1,8 @@
 import os
 import json
-import time
+import requests
 import gspread
 from google.oauth2.service_account import Credentials
-from playwright.sync_api import sync_playwright
 from datetime import datetime
 
 # --- 1. スプレッドシートの認証設定 ---
@@ -15,64 +14,50 @@ if not key_json:
 creds = Credentials.from_service_account_info(json.loads(key_json), scopes=scopes)
 gc = gspread.authorize(creds)
 
-# --- 2. CME FedWatchからスクレイピング ---
-def scrape_fed_data():
-    max_retries = 3
+# --- 2. CMEの内部APIからデータを取得 ---
+def get_fed_data():
+    # ブラウザを介さず、CMEのデータエンドポイントを直接叩く
+    url = "https://www.cmegroup.com/CmeWS/exp/v1/fedwatch/probabilities/latest"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.cmegroup.com/markets/interest-rates/target-rate-probabilities.html"
+    }
     
-    with sync_playwright() as p:
-        # Chromiumを使用（ボット検知回避設定付き）
-        browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
-        context = browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        )
-        page = context.new_page()
-
-        for attempt in range(max_retries):
-            try:
-                # CMEサイトへ移動
-                page.goto("https://www.cmegroup.com/markets/interest-rates/target-rate-probabilities.html", 
-                          wait_until="networkidle", timeout=60000)
-                
-                # QuikStrikeのiframeを探す
-                frame_element = page.frame_locator("iframe[src*='quikstrike']")
-                # 確率が載っているテーブルが表示されるまで待機
-                target_cell = frame_element.locator("td.probability-cell").first
-                target_cell.wait_for(timeout=30000)
-                
-                prob_text = target_cell.inner_text()
-                browser.close()
-                return prob_text.replace('%', '').strip()
-
-            except Exception as e:
-                print(f"試行 {attempt + 1} 失敗: {e}")
-                time.sleep(10)
-                if attempt == max_retries - 1:
-                    browser.close()
-                    raise e
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    data = response.json()
+    
+    # 取得したデータから「次回の会合」の「据え置き」確率を抽出
+    # データの構造：data[0] が直近の会合
+    first_meeting = data[0]
+    # 通常、probabilitiesの最初の要素が現在の金利維持（据え置き）の確率です
+    prob = first_meeting['probabilities'][0]['probability']
+    
+    # 0.985 などの数値を 98.5 に変換して返す
+    return float(prob) * 100
 
 # --- 3. スプレッドシートへ書き込み ---
 def update_sheet(new_val):
-    # スプレッドシート名が正しいか確認してください
     sh = gc.open("CME定期調査").sheet1
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     all_values = sh.get_all_values()
     last_val = 0
     if len(all_values) > 1:
-        # 前回の数値を取得
         try:
+            # B列（前回の値）を取得
             last_val = float(all_values[-1][1])
         except:
             last_val = 0
     
-    diff = float(new_val) - last_val
+    diff = new_val - last_val
     sh.append_row([now, new_val, diff])
 
 if __name__ == "__main__":
     try:
-        data = scrape_fed_data()
-        update_sheet(data)
-        print(f"更新成功: {data}")
+        val = get_fed_data()
+        update_sheet(val)
+        print(f"成功: 現在の確率は {val}% です。")
     except Exception as e:
-        print(f"最終エラー: {e}")
+        print(f"エラーが発生しました: {e}")
         raise

@@ -17,7 +17,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          playwright install chromium firefox # ブラウザをインストール（ChromiumとFirefox）
       - name: Run scraper
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }} # GitHubのSecretsに保存した鍵を使う
