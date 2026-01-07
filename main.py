@@ -1,49 +1,66 @@
 import os
 import json
-import requests
+import time
 import gspread
 from google.oauth2.service_account import Credentials
+from playwright.sync_api import sync_playwright
 from datetime import datetime
 
 # --- 1. スプレッドシートの認証設定 ---
 scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-key_json = os.environ.get("GCP_SA_KEY")
-if not key_json:
-    raise ValueError("GCP_SA_KEY is not set in environment variables")
 
-creds = Credentials.from_service_account_info(json.loads(key_json), scopes=scopes)
+# ローカル実行用: JSONファイルを直接読み込む
+# GitHub Actions実行時は環境変数から読み込む
+if os.environ.get("GCP_SA_KEY"):
+    # GitHub Actionsの場合
+    key_json = os.environ.get("GCP_SA_KEY")
+    creds = Credentials.from_service_account_info(json.loads(key_json), scopes=scopes)
+else:
+    # ローカル実行の場合: 同じフォルダに service_account.json を置いてください
+    SERVICE_ACCOUNT_FILE = 'service_account.json'
+    if os.path.exists(SERVICE_ACCOUNT_FILE):
+        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+    else:
+        raise FileNotFoundError(f"認証ファイルが見つかりません: {SERVICE_ACCOUNT_FILE}")
+
 gc = gspread.authorize(creds)
 
-# --- 2. QuikStrikeのデータエンドポイントから取得 ---
-def get_fed_data():
-    # CME本体ではなく、データ提供元のURLを直接使用
-    url = "https://cmegroup-fedwatch.quikstrike.net/api/v1/fedwatch/probabilities/latest"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://www.cmegroup.com",
-        "Referer": "https://www.cmegroup.com/"
-    }
-    
-    # セッションを使用して、よりブラウザに近い挙動にする
-    session = requests.Session()
-    response = session.get(url, headers=headers, timeout=30)
-    
-    if response.status_code == 403:
-        raise Exception("CME/QuikStrikeによりアクセスが拒絶されました(403)。")
+# --- 2. CME FedWatchからスクレイピング ---
+def scrape_fed_data():
+    with sync_playwright() as p:
+        # headless=False にすると、実際にブラウザが動く様子が見えます（デバッグに最適）
+        # headless=True にすると、バックグラウンドで実行されます
+        browser = p.chromium.launch(headless=False)
+        page = browser.new_page()
         
-    response.raise_for_status()
-    data = response.json()
-    
-    # データのパース (QuikStrikeのデータ構造に合わせる)
-    # data[0] は直近の会合。probabilitiesリストの最初の要素を取得
-    try:
-        first_meeting = data[0]
-        prob = first_meeting['probabilities'][0]['probability']
-        return float(prob) * 100
-    except (KeyError, IndexError) as e:
-        raise Exception(f"データ構造の解析に失敗しました: {e}")
+        # CMEのサイトへ移動
+        print("サイトへアクセス中...")
+        page.goto("https://www.cmegroup.com/markets/interest-rates/target-rate-probabilities.html", timeout=60000)
+        
+        # iframe（データが入っている箱）を探す
+        # データの読み込みに時間がかかるので長めに待つ
+        print("データを待機中...")
+        time.sleep(3)  # ページが完全に読み込まれるまで待機
+        
+        frame = page.frame_locator("iframe[src*='quikstrike']")
+        
+        # 確率が表示されているセルを探す
+        # セレクタは変わる可能性がありますが、まずはこれでトライ
+        try:
+            target = frame.locator("td.probability-cell").first
+            target.wait_for(timeout=30000)
+            prob_text = target.inner_text()
+        except Exception as e:
+            print(f"セレクタが見つかりません。代替方法を試します...: {e}")
+            # 代替セレクタを試す
+            target = frame.locator("td").first
+            target.wait_for(timeout=30000)
+            prob_text = target.inner_text()
+        
+        print(f"取得できたデータ: {prob_text}")
+        
+        browser.close()
+        return prob_text.replace('%', '').strip()
 
 # --- 3. スプレッドシートへ書き込み ---
 def update_sheet(new_val):
@@ -54,19 +71,19 @@ def update_sheet(new_val):
     last_val = 0
     if len(all_values) > 1:
         try:
-            # 最後の行のB列を取得
             last_val = float(all_values[-1][1])
-        except (ValueError, IndexError):
+        except:
             last_val = 0
     
-    diff = round(new_val - last_val, 2)
-    sh.append_row([now, round(new_val, 2), diff])
+    diff = float(new_val) - last_val
+    sh.append_row([now, new_val, diff])
+    print("スプレッドシートへの書き込み完了")
 
 if __name__ == "__main__":
     try:
-        val = get_fed_data()
-        update_sheet(val)
-        print(f"成功: 現在の確率は {val}% です。")
+        data = scrape_fed_data()
+        update_sheet(data)
+        print(f"成功: データ {data} をスプレッドシートに書き込みました")
     except Exception as e:
-        print(f"エラーが発生しました: {e}")
+        print(f"エラー: {e}")
         raise
