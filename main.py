@@ -20,23 +20,30 @@ gc = gspread.authorize(creds)
 def scrape_fed_data():
     max_retries = 3
     retry_delay = 5
+    browsers_to_try = ['chromium', 'firefox']  # Chromiumが失敗したらFirefoxを試す
     
-    for attempt in range(max_retries):
-        try:
-            with sync_playwright() as p:
-                # ブラウザ起動（HTTP/2を無効化、より現実的な設定）
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=[
-                        '--disable-blink-features=AutomationControlled',
-                        '--disable-http2',  # HTTP/2を無効化
-                        '--disable-dev-shm-usage',
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-web-security',
-                        '--disable-features=IsolateOrigins,site-per-process',
-                    ]
-                )
+    for browser_type in browsers_to_try:
+        for attempt in range(max_retries):
+            try:
+                with sync_playwright() as p:
+                    # ブラウザ起動（HTTP/2を無効化、より現実的な設定）
+                    if browser_type == 'chromium':
+                        browser = p.chromium.launch(
+                            headless=True,
+                            args=[
+                                '--disable-blink-features=AutomationControlled',
+                                '--disable-http2',  # HTTP/2を無効化
+                                '--disable-dev-shm-usage',
+                                '--no-sandbox',
+                                '--disable-setuid-sandbox',
+                                '--disable-web-security',
+                                '--disable-features=IsolateOrigins,site-per-process',
+                            ]
+                        )
+                    else:  # firefox
+                        browser = p.firefox.launch(
+                            headless=True
+                        )
                 
                 # コンテキスト作成（ユーザーエージェントとビューポートを設定）
                 context = browser.new_context(
@@ -62,11 +69,15 @@ def scrape_fed_data():
                         timeout=60000
                     )
                 except Exception as e:
-                    print(f"ページ遷移エラー（試行 {attempt + 1}/{max_retries}）: {e}")
+                    print(f"ページ遷移エラー（{browser_type}、試行 {attempt + 1}/{max_retries}）: {e}")
                     browser.close()
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                         continue
+                    # このブラウザタイプでの全試行が失敗した場合、次のブラウザタイプを試す
+                    if browser_type == 'chromium' and 'firefox' in browsers_to_try:
+                        print(f"Chromiumでの試行が失敗したため、Firefoxに切り替えます")
+                        break
                     raise
                 
                 # 少し待機してページが完全に読み込まれるのを待つ
@@ -78,7 +89,7 @@ def scrape_fed_data():
                     frame = page.frame_locator("iframe[src*='quikstrike']")
                     frame.locator(".grid-container").wait_for(timeout=30000) # 表が出るまで待つ
                 except Exception as e:
-                    print(f"iframe読み込みエラー（試行 {attempt + 1}/{max_retries}）: {e}")
+                    print(f"iframe読み込みエラー（{browser_type}、試行 {attempt + 1}/{max_retries}）: {e}")
                     # ページのHTMLを確認（デバッグ用）
                     print("ページタイトル:", page.title())
                     print("ページURL:", page.url)
@@ -86,6 +97,10 @@ def scrape_fed_data():
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                         continue
+                    # このブラウザタイプでの全試行が失敗した場合、次のブラウザタイプを試す
+                    if browser_type == 'chromium' and 'firefox' in browsers_to_try:
+                        print(f"Chromiumでの試行が失敗したため、Firefoxに切り替えます")
+                        break
                     raise
                 
                 # 例：次回の会合日の「据え置き」確率を取得
@@ -108,14 +123,18 @@ def scrape_fed_data():
                 browser.close()
                 return prob_unchanged.replace('%', '').strip() # 数字だけ抜き出す
                 
-        except Exception as e:
-            print(f"スクレイピングエラー（試行 {attempt + 1}/{max_retries}）: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                continue
-            raise Exception(f"スクレイピングに失敗しました（{max_retries}回試行）: {e}")
+            except Exception as e:
+                print(f"スクレイピングエラー（{browser_type}、試行 {attempt + 1}/{max_retries}）: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                # このブラウザタイプでの全試行が失敗した場合、次のブラウザタイプを試す
+                if browser_type == 'chromium' and 'firefox' in browsers_to_try:
+                    print(f"Chromiumでの試行が失敗したため、Firefoxに切り替えます")
+                    break
+                raise Exception(f"スクレイピングに失敗しました（{browser_type}、{max_retries}回試行）: {e}")
     
-    raise Exception("スクレイピングに失敗しました")
+    raise Exception("すべてのブラウザでのスクレイピングに失敗しました")
 
 # --- 3. スプレッドシートへ書き込み ---
 def update_sheet(new_val):
