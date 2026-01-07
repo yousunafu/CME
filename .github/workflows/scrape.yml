@@ -1,0 +1,24 @@
+name: FedWatch Auto Scraper
+
+on:
+  schedule:
+    - cron: '0 0,6,12,18 * * *' # 日本時間 9:00, 15:00, 21:00, 03:00 ごろ
+  workflow_dispatch: # 手動でテスト実行できるようにするボタン
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium # ブラウザをインストール
+      - name: Run scraper
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }} # GitHubのSecretsに保存した鍵を使う
+        run: python main.py
