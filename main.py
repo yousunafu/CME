@@ -24,10 +24,18 @@ def scrape_fed_data():
     for attempt in range(max_retries):
         try:
             with sync_playwright() as p:
-                # ブラウザ起動（より現実的な設定）
+                # ブラウザ起動（HTTP/2を無効化、より現実的な設定）
                 browser = p.chromium.launch(
                     headless=True,
-                    args=['--disable-blink-features=AutomationControlled']
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-http2',  # HTTP/2を無効化
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process',
+                    ]
                 )
                 
                 # コンテキスト作成（ユーザーエージェントとビューポートを設定）
@@ -37,19 +45,20 @@ def scrape_fed_data():
                     extra_http_headers={
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                         'Accept-Language': 'en-US,en;q=0.9',
-                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Accept-Encoding': 'gzip, deflate',  # brを削除（HTTP/2関連）
                         'Connection': 'keep-alive',
                         'Upgrade-Insecure-Requests': '1',
-                    }
+                    },
+                    ignore_https_errors=True  # HTTPSエラーを無視
                 )
                 
                 page = context.new_page()
                 
-                # ページ遷移（タイムアウトを長めに設定、リトライあり）
+                # ページ遷移（domcontentloadedを使用、HTTP/2エラーを回避）
                 try:
                     page.goto(
                         "https://www.cmegroup.com/markets/interest-rates/target-rate-probabilities.html",
-                        wait_until="networkidle",
+                        wait_until="domcontentloaded",  # networkidleから変更
                         timeout=60000
                     )
                 except Exception as e:
