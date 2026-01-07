@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import gspread
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
@@ -17,23 +18,95 @@ gc = gspread.authorize(creds)
 
 # --- 2. CME FedWatchからスクレイピング ---
 def scrape_fed_data():
-    with sync_playwright() as p:
-        # ブラウザ起動
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto("https://www.cmegroup.com/markets/interest-rates/target-rate-probabilities.html")
-        
-        # クイックストライクのiframe（データ本体）を待機して取得
-        # セレクタは会合日の確率テーブルを指定（※サイト構造変更で要調整）
-        frame = page.frame_locator("iframe[src*='quikstrike']")
-        frame.locator(".grid-container").wait_for() # 表が出るまで待つ
-        
-        # 例：次回の会合日の「据え置き」確率を取得
-        # ※以下のセレクタはイメージです。実際のサイト構造に合わせて微調整が必要です。
-        prob_unchanged = frame.locator("td.probability-cell").first.inner_text() 
-        
-        browser.close()
-        return prob_unchanged.replace('%', '') # 数字だけ抜き出す
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            with sync_playwright() as p:
+                # ブラウザ起動（より現実的な設定）
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--disable-blink-features=AutomationControlled']
+                )
+                
+                # コンテキスト作成（ユーザーエージェントとビューポートを設定）
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    extra_http_headers={
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                    }
+                )
+                
+                page = context.new_page()
+                
+                # ページ遷移（タイムアウトを長めに設定、リトライあり）
+                try:
+                    page.goto(
+                        "https://www.cmegroup.com/markets/interest-rates/target-rate-probabilities.html",
+                        wait_until="networkidle",
+                        timeout=60000
+                    )
+                except Exception as e:
+                    print(f"ページ遷移エラー（試行 {attempt + 1}/{max_retries}）: {e}")
+                    browser.close()
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    raise
+                
+                # 少し待機してページが完全に読み込まれるのを待つ
+                time.sleep(3)
+                
+                # クイックストライクのiframe（データ本体）を待機して取得
+                # セレクタは会合日の確率テーブルを指定（※サイト構造変更で要調整）
+                try:
+                    frame = page.frame_locator("iframe[src*='quikstrike']")
+                    frame.locator(".grid-container").wait_for(timeout=30000) # 表が出るまで待つ
+                except Exception as e:
+                    print(f"iframe読み込みエラー（試行 {attempt + 1}/{max_retries}）: {e}")
+                    # ページのHTMLを確認（デバッグ用）
+                    print("ページタイトル:", page.title())
+                    print("ページURL:", page.url)
+                    browser.close()
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    raise
+                
+                # 例：次回の会合日の「据え置き」確率を取得
+                # ※以下のセレクタはイメージです。実際のサイト構造に合わせて微調整が必要です。
+                try:
+                    prob_unchanged = frame.locator("td.probability-cell").first.inner_text(timeout=10000)
+                except Exception as e:
+                    print(f"データ取得エラー（試行 {attempt + 1}/{max_retries}）: {e}")
+                    # 代替セレクタを試す
+                    try:
+                        # より一般的なセレクタを試す
+                        prob_unchanged = frame.locator("td").first.inner_text(timeout=10000)
+                    except:
+                        browser.close()
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            continue
+                        raise
+                
+                browser.close()
+                return prob_unchanged.replace('%', '').strip() # 数字だけ抜き出す
+                
+        except Exception as e:
+            print(f"スクレイピングエラー（試行 {attempt + 1}/{max_retries}）: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+            raise Exception(f"スクレイピングに失敗しました（{max_retries}回試行）: {e}")
+    
+    raise Exception("スクレイピングに失敗しました")
 
 # --- 3. スプレッドシートへ書き込み ---
 def update_sheet(new_val):
@@ -54,5 +127,17 @@ def update_sheet(new_val):
     sh.append_row([now, new_val, diff])
 
 if __name__ == "__main__":
-    data = scrape_fed_data()
-    update_sheet(data)
+    try:
+        data = scrape_fed_data()
+        update_sheet(data)
+        print(f"成功: データ {data} をスプレッドシートに書き込みました")
+    except Exception as e:
+        print(f"エラー: {e}")
+        # エラーをスプレッドシートに記録（オプション）
+        try:
+            sh = gc.open("CME定期調査").sheet1
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            sh.append_row([now, f"エラー: {str(e)[:100]}", "N/A"])
+        except:
+            pass
+        raise  # GitHub Actionsでエラーとして記録されるように
