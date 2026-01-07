@@ -18,8 +18,8 @@ gc = gspread.authorize(creds)
 
 # --- 2. CME FedWatchからスクレイピング ---
 def scrape_fed_data():
-    max_retries = 3
-    retry_delay = 5
+    max_retries = 5  # リトライ回数を増やす
+    retry_delay = 10  # 待機時間を長くする
     browsers_to_try = ['chromium', 'firefox']  # Chromiumが失敗したらFirefoxを試す
     
     for browser_type in browsers_to_try:
@@ -46,28 +46,44 @@ def scrape_fed_data():
                         )
                 
                 # コンテキスト作成（ユーザーエージェントとビューポートを設定）
-                context = browser.new_context(
-                    viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    extra_http_headers={
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Accept-Encoding': 'gzip, deflate',  # brを削除（HTTP/2関連）
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1',
-                    },
-                    ignore_https_errors=True  # HTTPSエラーを無視
-                )
+                if browser_type == 'chromium':
+                    context = browser.new_context(
+                        viewport={'width': 1920, 'height': 1080},
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        extra_http_headers={
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Accept-Encoding': 'gzip, deflate',  # brを削除（HTTP/2関連）
+                            'Connection': 'keep-alive',
+                            'Upgrade-Insecure-Requests': '1',
+                        },
+                        ignore_https_errors=True  # HTTPSエラーを無視
+                    )
+                else:  # firefox
+                    context = browser.new_context(
+                        viewport={'width': 1920, 'height': 1080},
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+                        extra_http_headers={
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Accept-Encoding': 'gzip, deflate',
+                            'Connection': 'keep-alive',
+                            'Upgrade-Insecure-Requests': '1',
+                        }
+                    )
                 
                 page = context.new_page()
                 
                 # ページ遷移（domcontentloadedを使用、HTTP/2エラーを回避）
                 try:
+                    # より長いタイムアウトと待機時間を設定
                     page.goto(
                         "https://www.cmegroup.com/markets/interest-rates/target-rate-probabilities.html",
                         wait_until="domcontentloaded",  # networkidleから変更
-                        timeout=60000
+                        timeout=120000  # タイムアウトを2分に延長
                     )
+                    # ページが完全に読み込まれるまで追加の待機時間
+                    time.sleep(5)
                 except Exception as e:
                     print(f"ページ遷移エラー（{browser_type}、試行 {attempt + 1}/{max_retries}）: {e}")
                     browser.close()
@@ -81,7 +97,7 @@ def scrape_fed_data():
                     raise
                 
                 # 少し待機してページが完全に読み込まれるのを待つ
-                time.sleep(3)
+                time.sleep(5)  # 待機時間を延長
                 
                 # クイックストライクのiframe（データ本体）を待機して取得
                 # セレクタは会合日の確率テーブルを指定（※サイト構造変更で要調整）
