@@ -8,8 +8,8 @@ from datetime import datetime
 
 # --- 1. スプレッドシートの認証設定 ---
 scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-
-# ローカル実行用: JSONファイルを直接読み込む
+# ★注意: ローカルで動かす場合は、環境変数設定が面倒なので
+# JSONキーのファイル名を直接指定するのが一番簡単です
 # GitHub Actions実行時は環境変数から読み込む
 if os.environ.get("GCP_SA_KEY"):
     # GitHub Actionsの場合
@@ -29,7 +29,7 @@ gc = gspread.authorize(creds)
 def scrape_fed_data():
     with sync_playwright() as p:
         # headless=False にすると、実際にブラウザが動く様子が見えます（デバッグに最適）
-        # headless=True にすると、バックグラウンドで実行されます
+        # 本番環境では headless=True に変更するとバックグラウンドで実行されます
         browser = p.chromium.launch(headless=False)
         page = browser.new_page()
         
@@ -40,23 +40,14 @@ def scrape_fed_data():
         # iframe（データが入っている箱）を探す
         # データの読み込みに時間がかかるので長めに待つ
         print("データを待機中...")
-        time.sleep(3)  # ページが完全に読み込まれるまで待機
-        
         frame = page.frame_locator("iframe[src*='quikstrike']")
         
         # 確率が表示されているセルを探す
         # セレクタは変わる可能性がありますが、まずはこれでトライ
-        try:
-            target = frame.locator("td.probability-cell").first
-            target.wait_for(timeout=30000)
-            prob_text = target.inner_text()
-        except Exception as e:
-            print(f"セレクタが見つかりません。代替方法を試します...: {e}")
-            # 代替セレクタを試す
-            target = frame.locator("td").first
-            target.wait_for(timeout=30000)
-            prob_text = target.inner_text()
+        target = frame.locator("td.probability-cell").first
+        target.wait_for(timeout=30000)
         
+        prob_text = target.inner_text()
         print(f"取得できたデータ: {prob_text}")
         
         browser.close()
