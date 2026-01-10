@@ -7,6 +7,28 @@ from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 
+# ==================== 設定定数 ====================
+# スクレイピング設定
+MAX_RETRIES = 3
+RETRY_DELAY = 10
+PAGE_LOAD_TIMEOUT = 120000  # ミリ秒
+ELEMENT_WAIT_TIMEOUT = 10000  # ミリ秒
+HEADLESS_MODE = False  # デバッグ時はFalse、本番はTrue推奨
+
+# 待機時間（秒）
+WAIT_AFTER_PAGE_LOAD = 3
+WAIT_AFTER_IFRAME_LOAD = 5
+WAIT_AFTER_TABLE_LOAD = 5
+WAIT_FOR_TABLE_DATA = 3
+
+# 比較閾値
+MIN_CHANGE_THRESHOLD = 0.1  # 0.1%以上の変化で矢印を表示
+
+# スプレッドシート設定
+SPREADSHEET_NAME = "CME定期調査"
+PREVIOUS_SHEET_NAME = "前回値"
+SERVICE_ACCOUNT_FILE = 'service_account.json'
+
 # --- 1. スプレッドシートの認証設定 ---
 scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 # ★注意: ローカルで動かす場合は、環境変数設定が面倒なので
@@ -18,7 +40,6 @@ if os.environ.get("GCP_SA_KEY"):
     creds = Credentials.from_service_account_info(json.loads(key_json), scopes=scopes)
 else:
     # ローカル実行の場合: 同じフォルダに service_account.json を置いてください
-    SERVICE_ACCOUNT_FILE = 'service_account.json'
     if os.path.exists(SERVICE_ACCOUNT_FILE):
         creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
     else:
@@ -27,262 +48,251 @@ else:
 gc = gspread.authorize(creds)
 
 # --- 2. CME FedWatchからスクレイピング ---
-def scrape_fed_data():
-    max_retries = 3
-    retry_delay = 10
-    browsers_to_try = ['chromium', 'firefox']  # Chromiumが失敗したらFirefoxを試す
+
+def _launch_browser(playwright):
+    """Chromiumブラウザを起動してコンテキストとページを作成"""
+    # 元のコードと同じく、channel指定なしでPlaywrightのChromiumを使用
+    browser = playwright.chromium.launch(
+        headless=HEADLESS_MODE,
+        args=[
+            '--disable-blink-features=AutomationControlled',
+            '--disable-http2',  # HTTP/2を無効化（重要）
+            '--disable-dev-shm-usage',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process'
+        ]
+    )
+    context = browser.new_context(
+        viewport={'width': 1920, 'height': 1080},
+        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    )
     
-    for browser_type in browsers_to_try:
-        for attempt in range(max_retries):
-            try:
-                with sync_playwright() as p:
-                    # headless=True にすると、ブラウザが画面に表示されずバックグラウンドで実行されます
-                    # デバッグ時は headless=False に変更すると、ブラウザの動作が見えます
-                    if browser_type == 'chromium':
-                        browser = p.chromium.launch(
-                            headless=False,  # ブラウザを表示してデバッグ
-                            args=[
-                                '--disable-blink-features=AutomationControlled',
-                                '--disable-http2',  # HTTP/2を無効化（重要）
-                                '--disable-dev-shm-usage',
-                                '--no-sandbox',
-                                '--disable-setuid-sandbox',
-                                '--disable-web-security',
-                                '--disable-features=IsolateOrigins,site-per-process'
-                            ]
-                        )
-                    else:  # firefox
-                        browser = p.firefox.launch(
-                            headless=False  # ブラウザを表示してデバッグ
-                        )
-                    # より現実的なブラウザ設定
-                    if browser_type == 'chromium':
-                        context = browser.new_context(
-                            viewport={'width': 1920, 'height': 1080},
-                            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                        )
-                    else:  # firefox
-                        context = browser.new_context(
-                            viewport={'width': 1920, 'height': 1080},
-                            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
-                        )
-                    page = context.new_page()
-                    
-                    # CMEのサイトへ移動（日本語版）
-                    print(f"サイトへアクセス中... ({browser_type}, 試行 {attempt + 1}/{max_retries})")
-                    url = "https://www.cmegroup.com/ja/markets/interest-rates/cme-fedwatch-tool.html"
-                    
+    page = context.new_page()
+    return browser, page
+
+def _navigate_to_page(page, url, attempt):
+    """指定されたURLにページを遷移（元のコードと同じ動作）"""
+    print(f"サイトへアクセス中... (chromium, 試行 {attempt + 1}/{MAX_RETRIES})")
+    page.goto(url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
+    print("ページ遷移成功")
+    # 追加の待機時間（元のコードと同じ）
+    time.sleep(WAIT_AFTER_PAGE_LOAD)
+    
+    # ページが完全に読み込まれるまで待機（元のコードと同じ）
+    print("ページの読み込みを待機中...")
+    time.sleep(5)  # 元のコードと同じ固定時間待機
+    
+    # ページが読み込まれたか確認
+    print(f"ページタイトル: {page.title()}")
+    print(f"現在のURL: {page.url}")
+
+def _find_iframe(page):
+    """ページ内のiframeを検索"""
+    print("iframeを探しています...")
+    iframe_selectors = [
+        "iframe[src*='quikstrike']",
+        "iframe[src*='fedwatch']",
+        "iframe"
+    ]
+    
+    for selector in iframe_selectors:
+        try:
+            iframes = page.locator(selector).all()
+            if iframes:
+                print(f"iframeが見つかりました: {selector} ({len(iframes)}個)")
+                return page.frame_locator(selector).first
+        except Exception:
+            continue
+    
+    # iframeが見つからない場合のデバッグ情報
+    print("iframeが見つかりませんでした。ページの構造を確認します...")
+    page_content = page.content()
+    if "quikstrike" in page_content.lower() or "fedwatch" in page_content.lower():
+        print("ページ内に'quikstrike'または'fedwatch'の文字列が見つかりました")
+    else:
+        print("ページ内に'quikstrike'または'fedwatch'の文字列が見つかりませんでした")
+    raise Exception("iframeが見つかりませんでした")
+
+def _click_probabilities(frame):
+    """Probabilitiesタブをクリック"""
+    print("'Probabilities'をクリックしています...")
+    prob_selectors = [
+        "text=Probabilities",
+        "a:has-text('Probabilities')",
+        "[data-item='Probabilities']",
+        "li:has-text('Probabilities')",
+        ".nav-item:has-text('Probabilities')"
+    ]
+    
+    for selector in prob_selectors:
+        try:
+            prob_link = frame.locator(selector).first
+            if prob_link.is_visible(timeout=ELEMENT_WAIT_TIMEOUT // 2):
+                print(f"Probabilitiesリンクが見つかりました: {selector}")
+                prob_link.click()
+                print("Probabilitiesをクリックしました")
+                return True
+        except Exception as e:
+            print(f"セレクタ '{selector}' でエラー: {e}")
+            continue
+    
+    print("警告: Probabilitiesが見つかりませんでした。既に選択されている可能性があります。")
+    return False
+
+def _find_table(frame):
+    """iframe内のテーブルを検索（元のコードと同じ）"""
+    print("テーブル全体からデータを取得中...")
+    
+    table_selectors = ["table", "table tbody"]
+    for selector in table_selectors:
+        try:
+            table_locator = frame.locator(selector).first
+            table_locator.wait_for(state="attached", timeout=ELEMENT_WAIT_TIMEOUT)
+            print(f"テーブルが見つかりました: {selector}")
+            return table_locator
+        except Exception:
+            continue
+    
+    raise Exception("テーブルが見つかりませんでした")
+
+def _extract_table_header(frame):
+    """テーブルのヘッダー行を取得"""
+    print("ヘッダー行を取得中...")
+    header_selectors = ["thead tr", "table tr:first-child", "tr:first-child"]
+    
+    for selector in header_selectors:
+        try:
+            header = frame.locator(selector).first
+            header.wait_for(state="attached", timeout=ELEMENT_WAIT_TIMEOUT // 2)
+            header_cells = header.locator("th, td").all()
+            if len(header_cells) > 0:
+                header_row = [cell.inner_text() for cell in header_cells]
+                print(f"ヘッダー行を取得: {header_row}")
+                return header_row
+        except Exception:
+            continue
+    
+    return None
+
+def _extract_table_rows(frame, header_row):
+    """テーブルのデータ行と色情報を取得"""
+    print("データ行を取得中...")
+    data_rows = []
+    cell_colors = []
+    row_selectors = ["tbody tr", "table tr"]
+    
+    for selector in row_selectors:
+        try:
+            rows = frame.locator(selector).all()
+            if len(rows) > 0:
+                start_idx = 1 if header_row else 0
+                for row_idx, row in enumerate(rows[start_idx:]):
                     try:
-                        # domcontentloadedを使用してHTTP/2エラーを回避
-                        page.goto(url, wait_until="domcontentloaded", timeout=120000)
-                        print("ページ遷移成功")
-                        # 追加の待機時間
-                        time.sleep(3)
+                        cells = row.locator("td, th").all()
+                        row_data = []
+                        row_color_info = []
+                        
+                        for cell in cells:
+                            cell_text = cell.inner_text()
+                            row_data.append(cell_text.strip())
+                            
+                            # 色情報を取得
+                            try:
+                                bg_color = cell.evaluate("""
+                                    el => {
+                                        const style = window.getComputedStyle(el);
+                                        return style.backgroundColor || style.background || 'transparent';
+                                    }
+                                """)
+                                rgb_color = _parse_color_to_rgb(bg_color)
+                                row_color_info.append(rgb_color)
+                            except Exception:
+                                row_color_info.append(None)
+                        
+                        # データが有効な行か確認（%や数値が含まれる）
+                        if len(row_data) > 0 and any('%' in cell or cell.replace('.', '').replace('/', '').replace('-', '').isdigit() for cell in row_data):
+                            data_rows.append(row_data)
+                            # 取得日時列を考慮して、色情報にもNoneを追加
+                            cell_colors.append([None] + row_color_info)
                     except Exception as e:
-                        print(f"ページ遷移エラー（{browser_type}, 試行 {attempt + 1}/{max_retries}）: {e}")
-                        try:
-                            browser.close()
-                        except:
-                            pass
-                        if attempt < max_retries - 1:
-                            print(f"{retry_delay}秒待機して再試行します...")
-                            time.sleep(retry_delay)
-                            continue
-                        # このブラウザタイプでの全試行が失敗した場合、次のブラウザタイプを試す
-                        if browser_type == 'chromium' and 'firefox' in browsers_to_try:
-                            print(f"Chromiumでの試行が失敗したため、Firefoxに切り替えます")
-                            break
-                        # 次のブラウザタイプもない場合は、外側のループで処理される
-                        # （すべてのブラウザタイプを試し終わった後、最後に例外が発生する）
+                        print(f"  行 {row_idx + start_idx} の取得でエラー: {e}")
+                        continue
+                
+                if len(data_rows) > 0:
+                    print(f"データ行を{len(data_rows)}行取得しました（色情報も含む）")
+                    return data_rows, cell_colors
+        except Exception as e:
+            print(f"行取得エラー: {e}")
+            continue
+    
+    raise Exception("データ行が見つかりませんでした")
+
+def _parse_color_to_rgb(bg_color):
+    """背景色文字列をGoogleスプレッドシート用のRGB形式に変換"""
+    if not bg_color or bg_color in ['transparent', 'rgba(0, 0, 0, 0)', 'unknown', '']:
+        return None
+    
+    try:
+        # rgb(r, g, b) または rgba(r, g, b, a) 形式をパース
+        match = re.search(r'rgba?\((\d+),\s*(\d+),\s*(\d+)', bg_color)
+        if match:
+            r, g, b = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            return {'red': r/255.0, 'green': g/255.0, 'blue': b/255.0}
+        
+        # 16進数形式 (#RRGGBB) の場合
+        if bg_color.startswith('#'):
+            hex_color = bg_color[1:]
+            if len(hex_color) == 6:
+                r = int(hex_color[0:2], 16)
+                g = int(hex_color[2:4], 16)
+                b = int(hex_color[4:6], 16)
+                return {'red': r/255.0, 'green': g/255.0, 'blue': b/255.0}
+    except (ValueError, AttributeError):
+        pass
+    
+    return None
+
+def scrape_fed_data():
+    """CME FedWatchサイトからデータをスクレイピング（元のコードの動作を再現）"""
+    url = "https://www.cmegroup.com/ja/markets/interest-rates/cme-fedwatch-tool.html"
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            with sync_playwright() as p:
+                # Chromiumブラウザを起動
+                browser, page = _launch_browser(p)
+                
+                try:
+                    # ページに遷移
+                    _navigate_to_page(page, url, attempt)
                     
-                    # ページが完全に読み込まれるまで待機
-                    print("ページの読み込みを待機中...")
-                    time.sleep(5)
+                    # iframeを探す
+                    frame = _find_iframe(page)
                     
-                    # ページが読み込まれたか確認
-                    print(f"ページタイトル: {page.title()}")
-                    print(f"現在のURL: {page.url}")
-                    
-                    # iframe（データが入っている箱）を探す
-                    print("iframeを探しています...")
-                    # 複数のパターンでiframeを探す
-                    iframe_selectors = [
-                        "iframe[src*='quikstrike']",
-                        "iframe[src*='fedwatch']",
-                        "iframe"
-                    ]
-                    
-                    frame = None
-                    for selector in iframe_selectors:
-                        try:
-                            iframes = page.locator(selector).all()
-                            if iframes:
-                                print(f"iframeが見つかりました: {selector} ({len(iframes)}個)")
-                                frame = page.frame_locator(selector).first
-                                break
-                        except:
-                            continue
-                    
-                    if frame is None:
-                        # ページのHTMLを確認（デバッグ用）
-                        print("iframeが見つかりませんでした。ページの構造を確認します...")
-                        page_content = page.content()
-                        if "quikstrike" in page_content.lower() or "fedwatch" in page_content.lower():
-                            print("ページ内に'quikstrike'または'fedwatch'の文字列が見つかりました")
-                        else:
-                            print("ページ内に'quikstrike'または'fedwatch'の文字列が見つかりませんでした")
-                        raise Exception("iframeが見つかりませんでした")
-                    
-                    # iframe内のデータが読み込まれるまで待つ
+                    # iframe内のデータが読み込まれるまで待つ（元のコードと同じ）
                     print("iframe内のデータを待機中...")
-                    time.sleep(5)
+                    time.sleep(WAIT_AFTER_IFRAME_LOAD)
                     
-                    # 左側の「Probabilities」をクリック
-                    print("'Probabilities'をクリックしています...")
-                    prob_clicked = False
-                    prob_selectors = [
-                        "text=Probabilities",
-                        "a:has-text('Probabilities')",
-                        "[data-item='Probabilities']",
-                        "li:has-text('Probabilities')",
-                        ".nav-item:has-text('Probabilities')"
-                    ]
+                    # Probabilitiesをクリック
+                    _click_probabilities(frame)
                     
-                    for selector in prob_selectors:
-                        try:
-                            prob_link = frame.locator(selector).first
-                            if prob_link.is_visible(timeout=5000):
-                                print(f"Probabilitiesリンクが見つかりました: {selector}")
-                                prob_link.click()
-                                prob_clicked = True
-                                print("Probabilitiesをクリックしました")
-                                break
-                        except Exception as e:
-                            print(f"セレクタ '{selector}' でエラー: {e}")
-                            continue
-                    
-                    if not prob_clicked:
-                        print("警告: Probabilitiesが見つかりませんでした。既に選択されている可能性があります。")
-                    
-                    # テーブルが表示されるまで待つ
+                    # テーブルが表示されるまで待つ（元のコードと同じ）
                     print("テーブルの読み込みを待機中...")
-                    time.sleep(5)
-                    
-                    # テーブル全体からデータを取得
-                    print("テーブル全体からデータを取得中...")
-                    
-                    # より長い待機時間を設定
-                    time.sleep(3)
+                    time.sleep(5)  # 元のコードと同じ
                     
                     # テーブルを探す
-                    table = None
-                    table_selectors = ["table", "table tbody"]
+                    _find_table(frame)  # テーブルが存在することを確認
                     
-                    for selector in table_selectors:
-                        try:
-                            table_locator = frame.locator(selector).first
-                            table_locator.wait_for(state="attached", timeout=10000)
-                            table = table_locator
-                            print(f"テーブルが見つかりました: {selector}")
-                            break
-                        except:
-                            continue
-                    
-                    if table is None:
-                        raise Exception("テーブルが見つかりませんでした")
+                    # より長い待機時間を設定（元のコードと同じ）
+                    time.sleep(WAIT_FOR_TABLE_DATA)
                     
                     # ヘッダー行を取得
-                    print("ヘッダー行を取得中...")
-                    header_row = None
-                    header_selectors = ["thead tr", "table tr:first-child", "tr:first-child"]
+                    header_row = _extract_table_header(frame)
                     
-                    for selector in header_selectors:
-                        try:
-                            header = frame.locator(selector).first
-                            header.wait_for(state="attached", timeout=5000)
-                            header_cells = header.locator("th, td").all()
-                            if len(header_cells) > 0:
-                                header_row = [cell.inner_text() for cell in header_cells]
-                                print(f"ヘッダー行を取得: {header_row}")
-                                break
-                        except:
-                            continue
-                    
-                    # データ行を取得（色情報も含む）
-                    print("データ行を取得中...")
-                    data_rows = []
-                    cell_colors = []  # 各セルの色情報を保持（行×列の2次元配列）
-                    row_selectors = ["tbody tr", "table tr"]
-                    
-                    for selector in row_selectors:
-                        try:
-                            rows = frame.locator(selector).all()
-                            if len(rows) > 0:
-                                # ヘッダー行を除く（最初の行がヘッダーの場合）
-                                start_idx = 1 if header_row else 0
-                                for row_idx, row in enumerate(rows[start_idx:]):
-                                    try:
-                                        cells = row.locator("td, th").all()
-                                        row_data = []
-                                        row_color_info = []  # この行の各セルの色情報
-                                        
-                                        for cell_idx, cell in enumerate(cells):
-                                            cell_text = cell.inner_text()
-                                            row_data.append(cell_text.strip())
-                                            
-                                            # 色情報を取得
-                                            try:
-                                                # 背景色を取得
-                                                bg_color = cell.evaluate("""
-                                                    el => {
-                                                        const style = window.getComputedStyle(el);
-                                                        return style.backgroundColor || style.background || 'transparent';
-                                                    }
-                                                """)
-                                                
-                                                # RGB値を抽出して16進数に変換
-                                                rgb_color = None
-                                                if bg_color and bg_color not in ['transparent', 'rgba(0, 0, 0, 0)', 'unknown', '']:
-                                                    try:
-                                                        # rgb(r, g, b) または rgba(r, g, b, a) 形式をパース
-                                                        match = re.search(r'rgba?\((\d+),\s*(\d+),\s*(\d+)', bg_color)
-                                                        if match:
-                                                            r, g, b = int(match.group(1)), int(match.group(2)), int(match.group(3))
-                                                            rgb_color = {'red': r/255.0, 'green': g/255.0, 'blue': b/255.0}
-                                                        else:
-                                                            # 16進数形式 (#RRGGBB) の場合
-                                                            if bg_color.startswith('#'):
-                                                                hex_color = bg_color[1:]
-                                                                if len(hex_color) == 6:
-                                                                    r = int(hex_color[0:2], 16)
-                                                                    g = int(hex_color[2:4], 16)
-                                                                    b = int(hex_color[4:6], 16)
-                                                                    rgb_color = {'red': r/255.0, 'green': g/255.0, 'blue': b/255.0}
-                                                    except:
-                                                        pass
-                                                
-                                                row_color_info.append(rgb_color)
-                                            except Exception as e:
-                                                row_color_info.append(None)
-                                        
-                                        if len(row_data) > 0 and any('%' in cell or cell.replace('.', '').replace('/', '').replace('-', '').isdigit() for cell in row_data):
-                                            data_rows.append(row_data)
-                                            # 取得日時列を考慮して、色情報にもNoneを追加（最初の列は日時なので色なし）
-                                            cell_colors.append([None] + row_color_info)
-                                            
-                                    except Exception as e:
-                                        print(f"  行 {row_idx + start_idx} の取得でエラー: {e}")
-                                        continue
-                                
-                                if len(data_rows) > 0:
-                                    print(f"データ行を{len(data_rows)}行取得しました（色情報も含む）")
-                                    break
-                        except Exception as e:
-                            print(f"行取得エラー: {e}")
-                            continue
-                    
-                    if len(data_rows) == 0:
-                        raise Exception("データ行が見つかりませんでした")
+                    # データ行と色情報を取得
+                    data_rows, cell_colors = _extract_table_rows(frame, header_row)
                     
                     browser.close()
                     
@@ -290,31 +300,43 @@ def scrape_fed_data():
                     return {
                         'header': header_row if header_row else [],
                         'rows': data_rows,
-                        'cell_colors': cell_colors  # 各セルの色情報（行×列）
+                        'cell_colors': cell_colors
                     }
                     
-            except Exception as e:
-                print(f"スクレイピングエラー（{browser_type}, 試行 {attempt + 1}/{max_retries}）: {e}")
-                if attempt < max_retries - 1:
-                    print(f"{retry_delay}秒待機して再試行します...")
-                    time.sleep(retry_delay)
-                    continue
-                # このブラウザタイプでの全試行が失敗した場合、次のブラウザタイプを試す
-                if browser_type == 'chromium' and 'firefox' in browsers_to_try:
-                    print(f"Chromiumでの試行が失敗したため、Firefoxに切り替えます")
-                    break
-                raise Exception(f"スクレイピングに失敗しました（{browser_type}, {max_retries}回試行）: {e}")
+                except Exception as e:
+                    print(f"スクレイピングエラー（chromium, 試行 {attempt + 1}/{MAX_RETRIES}）: {e}")
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+                    
+                    if attempt < MAX_RETRIES - 1:
+                        print(f"{RETRY_DELAY}秒待機して再試行します...")
+                        time.sleep(RETRY_DELAY)
+                        continue
+                    
+                    raise Exception(f"スクレイピングに失敗しました（chromium, {MAX_RETRIES}回試行）: {e}")
+                    
+        except Exception as e:
+            # 外側の例外処理（ブラウザ起動失敗など）
+            print(f"ブラウザ起動エラー（chromium, 試行 {attempt + 1}/{MAX_RETRIES}）: {e}")
+            if attempt < MAX_RETRIES - 1:
+                print(f"{RETRY_DELAY}秒待機して再試行します...")
+                time.sleep(RETRY_DELAY)
+                continue
+            
+            raise Exception(f"スクレイピングに失敗しました（chromium, {MAX_RETRIES}回試行）: {e}")
     
-    raise Exception("すべてのブラウザでのスクレイピングに失敗しました")
+    raise Exception("スクレイピングに失敗しました（すべての試行が失敗）")
 
 # --- 3. スプレッドシートへ書き込み（前回値比較 + 矢印 + 色情報も適用） ---
 def update_sheet(table_data):
-    spreadsheet = gc.open("CME定期調査")
+    spreadsheet = gc.open(SPREADSHEET_NAME)
     sh = spreadsheet.sheet1
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     # 前回値シートの準備
-    previous_sheet_name = "前回値"
+    previous_sheet_name = PREVIOUS_SHEET_NAME
     try:
         previous_sheet = spreadsheet.worksheet(previous_sheet_name)
         print(f"前回値シート '{previous_sheet_name}' が見つかりました")
@@ -392,7 +414,7 @@ def update_sheet(table_data):
                     # 矢印と増減率を決定
                     if current_num is not None and previous_val is not None:
                         diff = current_num - previous_val
-                        if abs(diff) > 0.1:  # 0.1%以上の変化がある場合
+                        if abs(diff) > MIN_CHANGE_THRESHOLD:  # 閾値以上の変化がある場合
                             if diff > 0:
                                 arrow = " ↑"
                                 change_text = f" +{diff:.1f}%"
@@ -471,8 +493,6 @@ def update_sheet(table_data):
         print(f"現在のデータを「前回値」シートに保存しました")
     except Exception as e:
         print(f"前回値シートへの保存でエラー: {e}")
-    
-    print("スプレッドシートへの書き込み完了")
     
     print("スプレッドシートへの書き込み完了")
 

@@ -172,18 +172,26 @@ tail -20 logs/output.log
 
 ### 設定について
 
-- デフォルトでは `headless=False` に設定されており、ブラウザが表示されます
-- バックグラウンドで実行したい場合は、`main.py` の `headless=True` に変更してください
-- スプレッドシート名は `main.py` の312行目で設定されています（デフォルト: "CME定期調査"）
+- デフォルトでは `HEADLESS_MODE = False` に設定されており、ブラウザが表示されます
+- バックグラウンドで実行したい場合は、`main.py` の16行目の `HEADLESS_MODE = True` に変更してください
+- スプレッドシート名は `main.py` の28行目の `SPREADSHEET_NAME` 定数で設定されています（デフォルト: "CME定期調査"）
 
 ## 🔧 カスタマイズ
 
 ### スプレッドシート名を変更する
 
-`main.py` の312行目を編集：
+`main.py` の28行目の `SPREADSHEET_NAME` 定数を編集：
 
 ```python
-spreadsheet = gc.open("あなたのスプレッドシート名")
+SPREADSHEET_NAME = "あなたのスプレッドシート名"
+```
+
+### headlessモードの設定
+
+`main.py` の16行目の `HEADLESS_MODE` 定数を編集：
+
+```python
+HEADLESS_MODE = True  # Falseにするとブラウザが表示される（デバッグ用）
 ```
 
 ### 実行スケジュールを変更する
