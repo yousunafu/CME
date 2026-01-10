@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cme.scraper</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/suzukiyuu/Desktop/CME/venv/bin/python3</string>
+        <string>/Users/suzukiyuu/Desktop/CME/main.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/suzukiyuu/Desktop/CME</string>
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- 日本時間 9:00 -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- 日本時間 15:00 -->
+        <dict>
+            <key>Hour</key>
+            <integer>15</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- 日本時間 21:00 -->
+        <dict>
+            <key>Hour</key>
+            <integer>21</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- 日本時間 3:00 -->
+        <dict>
+            <key>Hour</key>
+            <integer>3</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/suzukiyuu/Desktop/CME/logs/output.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/suzukiyuu/Desktop/CME/logs/error.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

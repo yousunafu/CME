@@ -44,76 +44,66 @@ macOSでは `launchd` を使用して自動実行を設定できます。
 
 ### 手順
 
-1. `~/Library/LaunchAgents/com.cme.scraper.plist` というファイルを作成
-2. 以下の内容をコピー（パスを自分の環境に合わせて調整）：
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.cme.scraper</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/python3</string>
-        <string>/Users/suzukiyuu/Desktop/CME/main.py</string>
-    </array>
-    <key>StartCalendarInterval</key>
-    <array>
-        <dict>
-            <key>Hour</key>
-            <integer>9</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Hour</key>
-            <integer>15</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Hour</key>
-            <integer>21</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Hour</key>
-            <integer>3</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-    </array>
-    <key>StandardOutPath</key>
-    <string>/Users/suzukiyuu/Desktop/CME/logs/output.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/suzukiyuu/Desktop/CME/logs/error.log</string>
-</dict>
-</plist>
-```
-
-3. ログディレクトリを作成：
+1. **ログディレクトリを作成：**
 
 ```bash
 mkdir -p ~/Desktop/CME/logs
 ```
 
-4. launchdに登録：
+2. **plistファイルをLaunchAgentsにコピー：**
+
+```bash
+cp ~/Desktop/CME/com.cme.scraper.plist ~/Library/LaunchAgents/com.cme.scraper.plist
+```
+
+3. **launchdに登録：**
 
 ```bash
 launchctl load ~/Library/LaunchAgents/com.cme.scraper.plist
 ```
 
-5. 登録を解除する場合：
+4. **登録の確認：**
+
+```bash
+launchctl list | grep com.cme.scraper
+```
+
+### 実行スケジュール
+
+- **日本時間 9:00** (UTC 0:00)
+- **日本時間 15:00** (UTC 6:00)
+- **日本時間 21:00** (UTC 12:00)
+- **日本時間 3:00** (UTC 18:00)
+
+### 便利なコマンド
+
+**登録を解除する場合：**
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.cme.scraper.plist
+```
+
+**手動で実行する場合：**
+
+```bash
+cd ~/Desktop/CME
+source venv/bin/activate
+python main.py
+```
+
+**ログを確認する場合：**
+
+```bash
+# 出力ログ
+tail -f ~/Desktop/CME/logs/output.log
+
+# エラーログ
+tail -f ~/Desktop/CME/logs/error.log
 ```
 
 ## 注意事項
 
 - このツールはローカルPCから実行する必要があります（クラウドサーバーからのアクセスはCMEによってブロックされます）
 - PCが起動している必要があります（スリープ中は実行されません）
-- `headless=False` に設定されているため、ブラウザが表示されます。バックグラウンドで実行したい場合は、`main.py`の`headless=False`を`headless=True`に変更してください
+- `headless=True` に設定されているため、ブラウザは表示されずバックグラウンドで実行されます
+- デバッグ時は `main.py`の`headless=True`を`headless=False`に変更すると、ブラウザの動作が見えます
