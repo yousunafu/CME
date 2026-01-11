@@ -466,8 +466,12 @@ def update_sheet(table_data):
             for col_idx, color_info in enumerate(row_colors):
                 if color_info is not None:  # 色情報がある場合のみ
                     try:
-                        # 取得日時(1列目) + 空列(2列目) + データ列(col_idx + 1) = col_idx + 3
-                        col_letter = col_num_to_letter(col_idx + 3)
+                        # row_colors[0] = None（取得日時列用、スキップ）
+                        # row_colors[1] = テーブルの列1の色 → スプレッドシートの列C（3列目）
+                        # row_colors[2] = テーブルの列2の色 → スプレッドシートの列D（4列目）
+                        # スプレッドシート: 取得日時(1列目) + 空列(2列目) + テーブルの列1(3列目) + テーブルの列2(4列目)...
+                        # したがって、col_idx + 2が正しい（col_idx=1のとき列C、col_idx=2のとき列D）
+                        col_letter = col_num_to_letter(col_idx + 2)
                         cell_range = f"{col_letter}{sheet_row}"
                         
                         # gspreadのformatメソッドで背景色を設定
