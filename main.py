@@ -347,12 +347,18 @@ def update_sheet(table_data):
     
     # 前回値を読み込む
     previous_data = None
+    previous_datetime = None  # 前回の取得日時
     try:
         previous_values = previous_sheet.get_all_values()
         if len(previous_values) > 1:  # ヘッダー行以外にデータがある場合
             # ヘッダー行を除いて、データ部分のみ取得
             previous_data = previous_values[1:] if len(previous_values) > 1 else []
             print(f"前回値データを{len(previous_data)}行読み込みました")
+            
+            # 前回の取得日時を取得（2行目のA列、つまりprevious_values[1][0]）
+            if len(previous_values) > 1 and len(previous_values[1]) > 0:
+                previous_datetime = previous_values[1][0]
+                print(f"前回の取得日時: {previous_datetime}")
     except Exception as e:
         print(f"前回値の読み込みでエラー: {e}")
         previous_data = None
@@ -384,16 +390,27 @@ def update_sheet(table_data):
     # 現在のデータと前回値を比較して、矢印を決定
     all_data = []
     
-    if table_data['header']:
-        # 1行目にヘッダーを書き込み（取得日時列 + 空列を追加）
-        header_with_date = ['取得日時', ''] + table_data['header']
-        all_data.append(header_with_date)
-        print(f"ヘッダー行: {header_with_date}")
+    # ヘッダー行の列数を取得（データ行の列数として使用）
+    num_cols = len(table_data['header']) if table_data['header'] else 0
+    
+    # 1行目に取得日時を表示（前回の取得日時も表示）
+    if previous_datetime:
+        datetime_row = [f"取得日時: {now} (前回: {previous_datetime})"] + [''] * (num_cols - 1)
+    else:
+        datetime_row = [f"取得日時: {now}"] + [''] * (num_cols - 1)
+    all_data.append(datetime_row)
+    print(f"取得日時行: {datetime_row[0]}")
+    
+    # 2行目に空行を追加
+    if num_cols > 0:
+        empty_row = [''] * num_cols
+        all_data.append(empty_row)
     
     # データ行を書き込む（前回値と比較して矢印を追加）
     if table_data['rows']:
+        
         for row_idx, row in enumerate(table_data['rows']):
-            row_with_date = [now, '']  # 取得日時 + 空列
+            row_data = []  # 取得日時列と空列は削除
             
             for col_idx, current_val in enumerate(row):
                 # 確率値（%を含む）の場合のみ矢印を付ける
@@ -403,9 +420,11 @@ def update_sheet(table_data):
                 
                 # 確率値かどうかを判定（%記号を含み、数値であること）
                 if current_val and '%' in str(current_val):
-                    # 前回値と比較（取得日時 + 空列の2列分を考慮して col_idx + 2）
+                    # 前回値と比較
+                    # 列は取得日時列と空列が削除されたので、そのまま col_idx を使用
                     previous_val = None
-                    if previous_data and row_idx < len(previous_data) and col_idx + 2 < len(previous_data[row_idx]):
+                    if previous_data and row_idx < len(previous_data) and col_idx < len(previous_data[row_idx]):
+                        # 前回値シートの構造: [取得日時, 空列, データ...] なので col_idx + 2 でアクセス
                         previous_val_str = previous_data[row_idx][col_idx + 2] if len(previous_data[row_idx]) > col_idx + 2 else None
                         previous_val = extract_number(previous_val_str)
                     
@@ -431,17 +450,33 @@ def update_sheet(table_data):
                     cell_value = current_val + arrow + change_text
                 else:
                     cell_value = ""
-                row_with_date.append(cell_value)
+                row_data.append(cell_value)
             
-            all_data.append(row_with_date)
+            all_data.append(row_data)
         
-        print(f"データ行を{len(all_data) - 1}行準備しました（前回値と比較済み）")
+        print(f"データ行を{len(all_data) - 2}行準備しました（前回値と比較済み）")
     
     # 既存のデータをクリア（全て）
     sh.clear()
     
     # 一括で書き込み
     if len(all_data) > 0:
+        # データを書き込む前に、対象範囲の背景色を明示的にクリア（白色に設定）
+        num_rows = len(all_data)
+        num_cols = max(len(row) for row in all_data) if all_data else 0
+        
+        if num_cols > 0:
+            # 範囲を指定して背景色を白色にクリア
+            clear_range = f"A1:{col_num_to_letter(num_cols)}{num_rows}"
+            try:
+                sh.format(clear_range, {
+                    "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}  # 白色
+                })
+                print(f"対象範囲 {clear_range} の背景色をクリアしました")
+            except Exception as e:
+                print(f"背景色のクリアでエラー（続行します）: {e}")
+        
+        # その後、データを書き込み
         sh.update(values=all_data, range_name='A1')
         print(f"スプレッドシートに{len(all_data)}行を書き込みました")
     
@@ -454,8 +489,9 @@ def update_sheet(table_data):
         print("CMEサイトから取得した色情報を適用中...")
         cell_colors = table_data['cell_colors']
         
-        # ヘッダー行を考慮して、データ行の開始行番号を計算（2行目から）
-        start_row = 2 if table_data['header'] else 1
+        # 取得日時行と空行を考慮して、データ行の開始行番号を計算（3行目から）
+        # 1行目: 取得日時、2行目: 空行、3行目: データ行1（MEETING DATE行）
+        start_row = 3
         
         colored_cell_count = 0
         error_count = 0
@@ -464,15 +500,16 @@ def update_sheet(table_data):
             sheet_row = start_row + row_idx
             
             for col_idx, color_info in enumerate(row_colors):
-                if color_info is not None:  # 色情報がある場合のみ
+                # row_colors[0] = None（取得日時列用、スキップ）
+                # row_colors[1] = None（空列用、スキップ）
+                # row_colors[2]以降 = テーブルのデータ列の色
+                # スプレッドシートでは取得日時列と空列が削除されているので、
+                # row_colors[2]は列A、row_colors[3]は列Bになる
+                if col_idx >= 2 and color_info is not None:  # 取得日時列と空列をスキップ
                     try:
-                        # row_colors[0] = None（取得日時列用、スキップ）
-                        # row_colors[1] = None（空列用、スキップ）
-                        # row_colors[2] = テーブルの列1（日付列）の色 → スプレッドシートの列C（3列目）
-                        # row_colors[3] = テーブルの列2（確率値1）の色 → スプレッドシートの列D（4列目）
-                        # スプレッドシート: 取得日時(1列目) + 空列(2列目) + テーブルの列1(3列目) + テーブルの列2(4列目)...
-                        # col_idx + 1が正しい（col_idx=2のとき列C、col_idx=3のとき列D）
-                        col_letter = col_num_to_letter(col_idx + 1)
+                        # スプレッドシートの列は取得日時列と空列がないので、col_idx - 2
+                        sheet_col_idx = col_idx - 2
+                        col_letter = col_num_to_letter(sheet_col_idx + 1)
                         cell_range = f"{col_letter}{sheet_row}"
                         
                         # gspreadのformatメソッドで背景色を設定
@@ -491,11 +528,29 @@ def update_sheet(table_data):
         if error_count > 0:
             print(f"警告: {error_count}個のセルで色設定に失敗しました")
     
-    # 現在のデータを「前回値」シートに保存
+    # 現在のデータを「前回値」シートに保存（比較用のため、元の構造で保存）
     try:
         previous_sheet.clear()
-        previous_sheet.update(values=all_data, range_name='A1')
-        print(f"現在のデータを「前回値」シートに保存しました")
+        # 前回値シートには元の構造（取得日時列 + 空列 + データ）で保存
+        previous_data_for_save = []
+        
+        # ヘッダー行（取得日時列 + 空列 + データ）
+        if table_data['header']:
+            header_row = ['取得日時', ''] + table_data['header']
+            previous_data_for_save.append(header_row)
+        
+        # データ行（取得日時 + 空列 + データ）
+        # all_data[0]は取得日時行、all_data[1]は空行なのでスキップ
+        # all_data[2]以降がデータ行
+        for row in all_data[2:]:  # 取得日時行と空行をスキップしてデータ行のみ
+            # 空行はスキップ
+            if row and any(cell for cell in row if cell):  # 空行でない場合のみ
+                row_with_date = [now, ''] + row
+                previous_data_for_save.append(row_with_date)
+        
+        if len(previous_data_for_save) > 0:
+            previous_sheet.update(values=previous_data_for_save, range_name='A1')
+            print(f"現在のデータを「前回値」シートに保存しました（{len(previous_data_for_save)}行）")
     except Exception as e:
         print(f"前回値シートへの保存でエラー: {e}")
     
