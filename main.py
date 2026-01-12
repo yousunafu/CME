@@ -214,8 +214,8 @@ def _extract_table_rows(frame, header_row):
                         # データが有効な行か確認（%や数値が含まれる）
                         if len(row_data) > 0 and any('%' in cell or cell.replace('.', '').replace('/', '').replace('-', '').isdigit() for cell in row_data):
                             data_rows.append(row_data)
-                            # 取得日時列を考慮して、色情報にもNoneを追加
-                            cell_colors.append([None] + row_color_info)
+                            # 取得日時列と空列を考慮して、色情報にもNoneを2つ追加
+                            cell_colors.append([None, None] + row_color_info)
                     except Exception as e:
                         print(f"  行 {row_idx + start_idx} の取得でエラー: {e}")
                         continue
@@ -467,11 +467,12 @@ def update_sheet(table_data):
                 if color_info is not None:  # 色情報がある場合のみ
                     try:
                         # row_colors[0] = None（取得日時列用、スキップ）
-                        # row_colors[1] = テーブルの列1の色 → スプレッドシートの列C（3列目）
-                        # row_colors[2] = テーブルの列2の色 → スプレッドシートの列D（4列目）
+                        # row_colors[1] = None（空列用、スキップ）
+                        # row_colors[2] = テーブルの列1（日付列）の色 → スプレッドシートの列C（3列目）
+                        # row_colors[3] = テーブルの列2（確率値1）の色 → スプレッドシートの列D（4列目）
                         # スプレッドシート: 取得日時(1列目) + 空列(2列目) + テーブルの列1(3列目) + テーブルの列2(4列目)...
-                        # したがって、col_idx + 2が正しい（col_idx=1のとき列C、col_idx=2のとき列D）
-                        col_letter = col_num_to_letter(col_idx + 2)
+                        # col_idx + 1が正しい（col_idx=2のとき列C、col_idx=3のとき列D）
+                        col_letter = col_num_to_letter(col_idx + 1)
                         cell_range = f"{col_letter}{sheet_row}"
                         
                         # gspreadのformatメソッドで背景色を設定
