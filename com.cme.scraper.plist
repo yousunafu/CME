@@ -6,8 +6,10 @@
     <string>com.cme.scraper</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/suzukiyuu/Desktop/CME/venv/bin/python3</string>
-        <string>/Users/suzukiyuu/Desktop/CME/main.py</string>
+        <string>/bin/zsh</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>cd /Users/suzukiyuu/Desktop/CME &amp;&amp; ./venv/bin/python3 main.py</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/suzukiyuu/Desktop/CME</string>

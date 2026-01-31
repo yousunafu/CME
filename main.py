@@ -4,6 +4,7 @@ import time
 import re
 import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 
@@ -373,6 +374,38 @@ def update_sheet(table_data):
             n //= 26
         return result
     
+    # 既存データを読み込む（履歴として保持するため）
+    existing_data = []
+    existing_datetime_from_history = None  # 既存データ（履歴）から取得した最新の取得日時
+    existing_data_range = None  # 既存データの範囲（色込みで移動するため）
+    try:
+        existing_data = sh.get_all_values()
+        if existing_data:
+            print(f"既存データを{len(existing_data)}行読み込みました（履歴として保持）")
+            # 既存データの1行目から取得日時を抽出
+            if len(existing_data) > 0 and existing_data[0]:
+                first_row_text = str(existing_data[0][0]) if existing_data[0] else ""
+                # 「取得日時: YYYY-MM-DD HH:MM」の形式から取得日時を抽出
+                datetime_match = re.search(r'取得日時:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})', first_row_text)
+                if datetime_match:
+                    existing_datetime_from_history = datetime_match.group(1)
+                    print(f"既存データ（履歴）から最新の取得日時を抽出: {existing_datetime_from_history}")
+            
+            # 既存データの範囲を保存（色込みで移動するため）
+            num_existing_rows = len(existing_data)
+            num_existing_cols = max(len(row) for row in existing_data) if existing_data else 0
+            if num_existing_rows > 0 and num_existing_cols > 0:
+                existing_data_range = {
+                    'start_row': 1,
+                    'end_row': num_existing_rows,
+                    'start_col': 1,
+                    'end_col': num_existing_cols
+                }
+                print(f"既存データの範囲: {num_existing_rows}行 × {num_existing_cols}列")
+    except Exception as e:
+        print(f"既存データの読み込みでエラー（新規作成として続行）: {e}")
+        existing_data = []
+    
     # 数値を抽出する関数（%記号や矢印を除去）
     def extract_number(value):
         """セルから数値を抽出（例: '88.4% ↑' → 88.4）"""
@@ -393,9 +426,13 @@ def update_sheet(table_data):
     # ヘッダー行の列数を取得（データ行の列数として使用）
     num_cols = len(table_data['header']) if table_data['header'] else 0
     
+    # 既存データ（履歴）から取得した最新の取得日時を優先的に使用
+    # 既存データがない場合は、前回値シートから取得した日時を使用
+    previous_datetime_to_show = existing_datetime_from_history if existing_datetime_from_history else previous_datetime
+    
     # 1行目に取得日時を表示（前回の取得日時も表示）
-    if previous_datetime:
-        datetime_row = [f"取得日時: {now} (前回: {previous_datetime})"] + [''] * (num_cols - 1)
+    if previous_datetime_to_show:
+        datetime_row = [f"取得日時: {now} (前回: {previous_datetime_to_show})"] + [''] * (num_cols - 1)
     else:
         datetime_row = [f"取得日時: {now}"] + [''] * (num_cols - 1)
     all_data.append(datetime_row)
@@ -456,37 +493,103 @@ def update_sheet(table_data):
         
         print(f"データ行を{len(all_data) - 2}行準備しました（前回値と比較済み）")
     
-    # 既存のデータをクリア（全て）
-    sh.clear()
+    # 既存データがある場合、まず既存データを色込みで下に移動
+    if existing_data_range and len(existing_data) > 0:
+        try:
+            spreadsheet_id = spreadsheet.id
+            service = build('sheets', 'v4', credentials=creds)
+            
+            # シートIDを取得
+            sheet_name = sh.title
+            spreadsheet_metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+            sheet_id = None
+            for sheet in spreadsheet_metadata.get('sheets', []):
+                if sheet['properties']['title'] == sheet_name:
+                    sheet_id = sheet['properties']['sheetId']
+                    break
+            
+            if sheet_id is None:
+                raise Exception(f"シート '{sheet_name}' のIDを取得できませんでした")
+            
+            # 最新データの行数を計算
+            new_data_rows = len(all_data)
+            # 既存データを移動する先の行番号（最新データ + 区切り線の後）
+            destination_start_row = new_data_rows + 2  # 区切り線を含む
+            
+            # 既存データの範囲
+            source_start_row = existing_data_range['start_row']
+            source_end_row = existing_data_range['end_row']
+            source_start_col = existing_data_range['start_col']
+            source_end_col = existing_data_range['end_col']
+            
+            # 既存データを下に移動（色込みでカット&ペースト）
+            cut_paste_request = {
+                'cutPaste': {
+                    'source': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': source_start_row - 1,  # 0始まりに変換
+                        'endRowIndex': source_end_row,
+                        'startColumnIndex': source_start_col - 1,  # 0始まりに変換
+                        'endColumnIndex': source_end_col
+                    },
+                    'destination': {
+                        'sheetId': sheet_id,
+                        'rowIndex': destination_start_row - 1,  # 0始まりに変換（移動先の開始行）
+                        'columnIndex': source_start_col - 1  # 0始まりに変換（移動先の開始列）
+                    },
+                    'pasteType': 'PASTE_NORMAL'  # 値と書式（色情報含む）をコピー
+                }
+            }
+            
+            # バッチリクエストで実行
+            batch_request = {
+                'requests': [cut_paste_request]
+            }
+            
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=batch_request
+            ).execute()
+            
+            print(f"既存データを色込みで下に移動しました（{source_end_row - source_start_row + 1}行）")
+        except Exception as e:
+            print(f"既存データの移動でエラー（続行します）: {e}")
     
-    # 一括で書き込み
+    # 最新データを上に書き込み
     if len(all_data) > 0:
-        # データを書き込む前に、対象範囲の背景色を明示的にクリア（白色に設定）
-        num_rows = len(all_data)
+        # 最新データ部分の背景色をクリア（白色に設定）
+        new_data_rows = len(all_data)
         num_cols = max(len(row) for row in all_data) if all_data else 0
         
-        if num_cols > 0:
-            # 範囲を指定して背景色を白色にクリア
-            clear_range = f"A1:{col_num_to_letter(num_cols)}{num_rows}"
+        if num_cols > 0 and new_data_rows > 0:
+            # 最新データ部分のみ背景色を白色にクリア
+            clear_range = f"A1:{col_num_to_letter(num_cols)}{new_data_rows}"
             try:
                 sh.format(clear_range, {
                     "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}  # 白色
                 })
-                print(f"対象範囲 {clear_range} の背景色をクリアしました")
+                print(f"最新データ範囲 {clear_range} の背景色をクリアしました")
             except Exception as e:
                 print(f"背景色のクリアでエラー（続行します）: {e}")
         
-        # その後、データを書き込み
+        # 最新データを書き込み
         sh.update(values=all_data, range_name='A1')
-        print(f"スプレッドシートに{len(all_data)}行を書き込みました")
+        print(f"最新データ{len(all_data)}行を書き込みました")
+        
+        # 既存データがある場合、区切り線を追加
+        if existing_data and len(existing_data) > 0:
+            separator_row = ['---'] + [''] * (num_cols - 1) if num_cols > 0 else ['---']
+            separator_row_num = len(all_data) + 1
+            sh.update(values=[separator_row], range_name=f'A{separator_row_num}')
+            print(f"区切り線を{separator_row_num}行目に追加しました")
     
     # 背景色の自動設定は無効化（矢印のみ表示）
     # 変化に応じた色情報の適用は行わない
     # ただし、CMEサイトから取得した色情報は適用する
     
-    # CMEサイトから取得した色情報を適用
+    # CMEサイトから取得した色情報を適用（最新データのみ）
     if 'cell_colors' in table_data and table_data['cell_colors']:
-        print("CMEサイトから取得した色情報を適用中...")
+        print("CMEサイトから取得した色情報を適用中（最新データのみ）...")
         cell_colors = table_data['cell_colors']
         
         # 取得日時行と空行を考慮して、データ行の開始行番号を計算（3行目から）
@@ -524,7 +627,7 @@ def update_sheet(table_data):
                         continue
         
         if colored_cell_count > 0:
-            print(f"CMEサイトの色情報を{colored_cell_count}個のセルに適用しました")
+            print(f"CMEサイトの色情報を{colored_cell_count}個のセルに適用しました（最新データのみ）")
         if error_count > 0:
             print(f"警告: {error_count}個のセルで色設定に失敗しました")
     
