@@ -6,8 +6,10 @@
     <string>com.cme.scraper</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/YOUR_USERNAME/YOUR_PROJECT_PATH/venv/bin/python3</string>
-        <string>/Users/YOUR_USERNAME/YOUR_PROJECT_PATH/main.py</string>
+        <string>/bin/zsh</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>cd /Users/YOUR_USERNAME/YOUR_PROJECT_PATH &amp;&amp; ./venv/bin/python3 main.py</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/YOUR_USERNAME/YOUR_PROJECT_PATH</string>
