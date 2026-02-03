@@ -4,12 +4,14 @@
 <dict>
     <key>Label</key>
     <string>com.cme.scraper</string>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/zsh</string>
-        <string>-l</string>
-        <string>-c</string>
-        <string>cd /Users/YOUR_USERNAME/YOUR_PROJECT_PATH &amp;&amp; ./venv/bin/python3 main.py</string>
+        <string>/usr/bin/open</string>
+        <string>-a</string>
+        <string>Terminal</string>
+        <string>/Users/YOUR_USERNAME/YOUR_PROJECT_PATH/run_cme.command</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/YOUR_USERNAME/YOUR_PROJECT_PATH</string>

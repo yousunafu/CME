@@ -28,7 +28,7 @@ CME FedWatch のデータを自動で取得し、Google スプレッドシート
 - 取得したデータを **Google スプレッドシート「CME定期調査」** に書き込む
 - 前回のデータとの比較（増減率・矢印）と、元サイトの色を再現して表示する
 - 実行のたびに **最新データが上、過去データが下** に蓄積され、時系列で比較できる
-- **指定時刻に自動実行**（9:00 / 15:00 / 21:00 / 3:00・日本時間）できる（PC の起動中のみ。Mac は launchd、Windows はタスクスケジューラで設定）
+- **指定時刻に自動実行**（9:00 / 15:00 / 21:00 / 3:00・日本時間）できる（PC の起動中のみ。Mac は launchd、Windows はタスクスケジューラで設定）。Mac の定期実行は **手動実行と全く同じ流れ**（指定時刻に Terminal が開き、その中でブラウザも表示されて実行）になります。
 
 ---
 
@@ -53,6 +53,8 @@ CME FedWatch のデータを自動で取得し、Google スプレッドシート
 | 5 | （任意）定期実行の設定 | 3分 |
 
 **初回は合計でおおよそ 20 分程度**を想定してください。
+
+**※ 以下のステップ1〜5は Mac（macOS）向けの手順です。Windows の方は [Windows で使う場合](#windows-で使う場合) のセクションから進めてください。**
 
 ---
 
@@ -224,6 +226,10 @@ cd /Users/あなたのユーザー名/Desktop/CME
 mkdir -p logs
 ```
 
+### 5-1.5. （任意）実行後にターミナルを自動で閉じたい場合
+
+定期実行で開いたターミナルだけ、実行後に自動で閉じたい場合は、Terminal の設定で **「シェルが正常に終了したら閉じる」** にチェックを入れてください（**設定** → **プロファイル** → **シェル**）。普段使うターミナルにも同じ設定が効くため、不要な場合はスキップしてかまいません。
+
 ### 5-2. plist のパスを自分の環境に合わせる
 
 - すでに **`com.cme.scraper.plist`** がある場合: そのファイルを編集する
@@ -239,23 +245,23 @@ mkdir -p logs
 
 書き換え箇所:
 
-- `<string>cd /Users/suzukiyuu/Desktop/CME &amp;&amp; ...</string>`  
-  → `cd` の後を自分のプロジェクトのフルパスに
-- `<key>WorkingDirectory</key>` の次の `<string>...</string>`
+- **ProgramArguments の最後**の `<string>.../run_cme.command</string>`  
+  → 自分のプロジェクトのフルパス + `/run_cme.command`（例: `/Users/あなたのユーザー名/Desktop/CME/run_cme.command`）
+- `<key>WorkingDirectory</key>` の次の `<string>...</string>`（プロジェクトのフルパス）
 - `<key>StandardOutPath</key>` の次の `<string>.../logs/output.log</string>`
 - `<key>StandardErrorPath</key>` の次の `<string>.../logs/error.log</string>`
-
-**注意:** `&amp;&amp;` は XML 上での表記なので、そのまま残してください。  
-変更するのは `/Users/suzukiyuu/Desktop/CME` の部分だけです。
 
 ### 5-3. launchd への登録
 
 ターミナルで次を実行します（パスは自分の環境に合わせてください）。
 
 ```bash
+chmod +x /Users/あなたのユーザー名/Desktop/CME/run_cme.command
 cp /Users/あなたのユーザー名/Desktop/CME/com.cme.scraper.plist ~/Library/LaunchAgents/com.cme.scraper.plist
 launchctl load ~/Library/LaunchAgents/com.cme.scraper.plist
 ```
+
+指定時刻になると **Terminal が開き**、その中でブラウザも表示されて手動実行と同じ流れで実行されます。
 
 ### 5-4. 登録できているか確認
 
@@ -365,7 +371,7 @@ python main.py
 
 ### Windows: ステップ5 — 定期実行の設定（タスクスケジューラ）
 
-Windows では **タスクスケジューラ** で指定時刻に実行します。
+Windows では **タスクスケジューラ** で指定時刻に実行します。プロジェクトに同梱の **`run_cme.bat`** を使うと、実行結果が **`logs\output.log`** と **`logs\error.log`** に残ります（`run_cme.bat` 実行時に `logs` フォルダがなければ自動作成されます）。
 
 1. **タスクスケジューラ** を開く  
    「スタート」メニューで「タスクスケジューラ」と検索して起動
@@ -382,11 +388,11 @@ Windows では **タスクスケジューラ** で指定時刻に実行します
 5. **「操作」タブ** → **「新規」**
    - 操作: **「プログラムの開始」**
    - プログラム/スクリプト:  
-     **`C:\Users\あなたのユーザー名\Desktop\CME\venv\Scripts\python.exe`**  
-     （CME を置いた場所に合わせて書き換える）
-   - 引数の追加（オプション）: **`main.py`**
+     **`C:\Users\あなたのユーザー名\Desktop\CME\run_cme.bat`**  
+     （CME を置いたフォルダの **`run_cme.bat`** のフルパスに書き換える）
+   - 引数の追加: 空のままでよい
    - 開始: **`C:\Users\あなたのユーザー名\Desktop\CME`**  
-     （`main.py` があるフォルダのパス）
+     （`main.py` があるフォルダのパス。run_cme.bat と同じ場所）
    - **OK**
 6. **「条件」タブ**  
    - 「コンピューターを AC 電源で使用している場合のみタスクを実行する」のチェックを **外す**（ノートPC でも実行されるようにする）
@@ -395,7 +401,7 @@ Windows では **タスクスケジューラ** で指定時刻に実行します
 8. **OK** でタスクを作成する
 
 これで、指定した時刻（PC が起動していれば）に自動実行されます。  
-ログは Mac と同様、プロジェクト内の **`logs\output.log`** と **`logs\error.log`** に出力されます。
+ログはプロジェクト内の **`logs\output.log`**（標準出力）と **`logs\error.log`**（標準エラー）に追記されます。
 
 ### Windows: よく使う操作
 
@@ -411,6 +417,15 @@ python main.py
 
 タスクスケジューラを開き、作成したタスク（例: `CME FedWatch 取得`）を右クリック → **「無効」** で停止。  
 再開する場合は **「有効」** に戻す。時刻を変える場合はタスクをダブルクリックして「トリガー」を編集する。
+
+**ログを確認する**（定期実行で `run_cme.bat` を使っている場合）
+
+```cmd
+type C:\Users\あなたのユーザー名\Desktop\CME\logs\output.log
+type C:\Users\あなたのユーザー名\Desktop\CME\logs\error.log
+```
+
+（パスは CME を置いた場所に合わせて書き換えてください。直近だけ見る場合は、メモ帳で該当ファイルを開いてもかまいません。）
 
 ---
 
@@ -446,7 +461,7 @@ cp /Users/あなたのユーザー名/Desktop/CME/com.cme.scraper.plist ~/Librar
 launchctl load ~/Library/LaunchAgents/com.cme.scraper.plist
 ```
 
-### ログを確認する
+### ログを確認する（Mac）
 
 ```bash
 # 直近の出力ログ
@@ -455,6 +470,8 @@ tail -30 /Users/あなたのユーザー名/Desktop/CME/logs/output.log
 # 直近のエラーログ
 tail -30 /Users/あなたのユーザー名/Desktop/CME/logs/error.log
 ```
+
+Windows の場合は「[Windows で使う場合](#windows-で使う場合)」内の「Windows: よく使う操作」のログ確認を参照してください。
 
 ---
 
@@ -472,7 +489,7 @@ tail -30 /Users/あなたのユーザー名/Desktop/CME/logs/error.log
 
 ### ブラウザが起動しない
 
-次のコマンドで Chromium を入れ直します。
+**Mac:** 次のコマンドで Chromium を入れ直します。
 
 ```bash
 cd /Users/あなたのユーザー名/Desktop/CME
@@ -480,14 +497,18 @@ source venv/bin/activate
 playwright install chromium
 ```
 
+**Windows:** コマンドプロンプトまたは PowerShell で、プロジェクトのフォルダに移動して仮想環境を有効化したあと、同様に `playwright install chromium` を実行してください。
+
 ### 定期実行されているか分からない
 
-- 指定時刻のあとに `logs/output.log` を開き、実行時刻あたりにログが追記されているか確認する
-- `launchctl list com.cme.scraper` で登録されているか確認する
+**Mac:** 指定時刻のあとに `logs/output.log` を開き、実行時刻あたりにログが追記されているか確認する。`launchctl list com.cme.scraper` で登録されているか確認する。
+
+**Windows:** タスクスケジューラで該当タスクが「有効」か確認する。指定時刻のあとに `logs\output.log` を開き、実行時刻あたりにログが追記されているか確認する。
 
 ### そのほかエラーが出たとき
 
-- `logs/error.log` の最後の方を確認する
+- **Mac:** `logs/output.log` と `logs/error.log` の最後の方を確認する
+- **Windows:** `logs\output.log` と `logs\error.log` の最後の方を確認する
 - 出ているエラーメッセージをそのままコピーして、サポート担当者に共有すると原因を特定しやすいです
 
 ---
@@ -506,14 +527,6 @@ playwright install chromium
 
 - **スプレッドシート名を変えたい場合**  
   `main.py` を開き、`SPREADSHEET_NAME = "CME定期調査"` の部分を、使いたいスプレッドシート名に書き換えてください。
-
----
-
-## さらに詳しく知りたいとき
-
-- **Google の設定をより詳しく:** `初回セットアップガイド.md`
-- **定期実行の詳細:** `自動化セットアップ手順.md`
-- **渡す前の確認用:** `人に渡す際のチェックリスト.md`
 
 ---
 
