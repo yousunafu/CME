@@ -14,7 +14,8 @@ MAX_RETRIES = 3
 RETRY_DELAY = 10
 PAGE_LOAD_TIMEOUT = 120000  # ミリ秒
 ELEMENT_WAIT_TIMEOUT = 10000  # ミリ秒
-HEADLESS_MODE = False  # デバッグ時はFalse、本番はTrue推奨
+# 定期実行（launchd）時は環境変数 CME_HEADLESS=1 でヘッドレスに。手動実行時はブラウザ表示
+HEADLESS_MODE = os.environ.get("CME_HEADLESS", "").strip() == "1"
 
 # 待機時間（秒）
 WAIT_AFTER_PAGE_LOAD = 3

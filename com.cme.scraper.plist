@@ -8,10 +8,8 @@
     <string>Aqua</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/open</string>
-        <string>-a</string>
-        <string>Terminal</string>
-        <string>/Users/suzukiyuu/Desktop/CME/run_cme.command</string>
+        <string>/Users/suzukiyuu/Desktop/CME/venv/bin/python3</string>
+        <string>/Users/suzukiyuu/Desktop/CME/main.py</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/suzukiyuu/Desktop/CME</string>

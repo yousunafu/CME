@@ -28,7 +28,7 @@ CME FedWatch のデータを自動で取得し、Google スプレッドシート
 - 取得したデータを **Google スプレッドシート「CME定期調査」** に書き込む
 - 前回のデータとの比較（増減率・矢印）と、元サイトの色を再現して表示する
 - 実行のたびに **最新データが上、過去データが下** に蓄積され、時系列で比較できる
-- **指定時刻に自動実行**（9:00 / 15:00 / 21:00 / 3:00・日本時間）できる（PC の起動中のみ。Mac は launchd、Windows はタスクスケジューラで設定）。Mac の定期実行は **手動実行と全く同じ流れ**（指定時刻に Terminal が開き、その中でブラウザも表示されて実行）になります。
+- **指定時刻に自動実行**（9:00 / 15:00 / 21:00 / 3:00・日本時間）できる（PC の起動中のみ。Mac は launchd、Windows はタスクスケジューラで設定）。Mac の定期実行は **ターミナルを開かず**実行され、手動実行と同様に **ブラウザ（Chromium）が表示**されて取得します。
 
 ---
 
@@ -226,10 +226,6 @@ cd /Users/あなたのユーザー名/Desktop/CME
 mkdir -p logs
 ```
 
-### 5-1.5. （任意）実行後にターミナルを自動で閉じたい場合
-
-定期実行で開いたターミナルだけ、実行後に自動で閉じたい場合は、Terminal の設定で **「シェルが正常に終了したら閉じる」** にチェックを入れてください（**設定** → **プロファイル** → **シェル**）。普段使うターミナルにも同じ設定が効くため、不要な場合はスキップしてかまいません。
-
 ### 5-2. plist のパスを自分の環境に合わせる
 
 - すでに **`com.cme.scraper.plist`** がある場合: そのファイルを編集する
@@ -245,8 +241,8 @@ mkdir -p logs
 
 書き換え箇所:
 
-- **ProgramArguments の最後**の `<string>.../run_cme.command</string>`  
-  → 自分のプロジェクトのフルパス + `/run_cme.command`（例: `/Users/あなたのユーザー名/Desktop/CME/run_cme.command`）
+- **ProgramArguments** の 2 つの `<string>`（Python のパスと main.py のパス）  
+  → 例: `/Users/あなたのユーザー名/Desktop/CME/venv/bin/python3` と `/Users/あなたのユーザー名/Desktop/CME/main.py`
 - `<key>WorkingDirectory</key>` の次の `<string>...</string>`（プロジェクトのフルパス）
 - `<key>StandardOutPath</key>` の次の `<string>.../logs/output.log</string>`
 - `<key>StandardErrorPath</key>` の次の `<string>.../logs/error.log</string>`
@@ -256,12 +252,11 @@ mkdir -p logs
 ターミナルで次を実行します（パスは自分の環境に合わせてください）。
 
 ```bash
-chmod +x /Users/あなたのユーザー名/Desktop/CME/run_cme.command
 cp /Users/あなたのユーザー名/Desktop/CME/com.cme.scraper.plist ~/Library/LaunchAgents/com.cme.scraper.plist
 launchctl load ~/Library/LaunchAgents/com.cme.scraper.plist
 ```
 
-指定時刻になると **Terminal が開き**、その中でブラウザも表示されて手動実行と同じ流れで実行されます。
+指定時刻になると **ターミナルは開かず**実行され、**ブラウザが表示**されて手動実行と同じ流れで取得します。ログは `logs/output.log` と `logs/error.log` に追記されます。
 
 ### 5-4. 登録できているか確認
 
