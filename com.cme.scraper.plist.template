@@ -15,6 +15,13 @@
     <string>/Users/YOUR_USERNAME/YOUR_PROJECT_PATH</string>
     <key>StartCalendarInterval</key>
     <array>
+        <!-- 日本時間 3:00 -->
+        <dict>
+            <key>Hour</key>
+            <integer>3</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
         <!-- 日本時間 9:00 -->
         <dict>
             <key>Hour</key>
@@ -33,13 +40,6 @@
         <dict>
             <key>Hour</key>
             <integer>21</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <!-- 日本時間 3:00 -->
-        <dict>
-            <key>Hour</key>
-            <integer>3</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
